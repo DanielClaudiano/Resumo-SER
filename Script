@@ -1,0 +1,164 @@
+ #simulando dados espaciais bym2
+############ corrigir graficos e ver aqueles que estao faltando
+
+
+library(INLA)
+set.seed(1234)
+#roraima
+library(geobr)
+saopaulo  = read_municipality(code_muni = 35,year=2018,simplified = T, showProgress = F)
+library(spdep)
+library(tidyverse)
+saopaulo = saopaulo |> filter(!code_muni %in% c(3520400))
+# Construindo a matriz de vizinhança 
+nb  = poly2nb(saopaulo,queen=TRUE)
+n_shape   = nrow(saopaulo)
+
+# Construindo a matriz de vizinhança 
+nb  = poly2nb(saopaulo,queen=TRUE)
+n_shape   = nrow(saopaulo)
+W   = matrix(0, n_shape, n_shape)
+for(i in 1:n_shape){  W[i, nb[[i]]] = 1 }
+
+# Ponderando a matriz de vizinhança (linhas somando 1)
+nbw   = nb2listw(nb,style="W")
+#nbw   = nb2listw(nb,style="W",zero.policy = TRUE)
+Np    = matrix(0, n_shape, n_shape)
+
+for(i in 1:n_shape){
+  Np[i,i]   = sum(W[i,]) #número de vizinhos da região i
+}
+
+R = Np - W
+
+ginvR = MASS::ginv(R) # inversa generalizada de R
+
+ginvRscaled <-  inla.scale.model(ginvR,
+                       constr=list(A=matrix(1, nrow=1, ncol=n_shape), e=0))
+
+tau = 1/4 # PARAMETRO DE PRECISAO INVERSO A VARIANCIA
+
+rho = 0.9
+rhocompl = rep(1-rho,n_shape)
+
+Sigma = (tau^-1)*(diag(rhocompl)+rho*ginvRscaled)
+SigmaBYM2 = as.matrix(Sigma)
+
+SigmaLeroux = (tau^-1)*solve(diag(rhocompl)+rho*R)
+
+
+phiBYM2 =  mvtnorm::rmvnorm(1,rep(0,n_shape),SigmaBYM2) # dependencia espacial
+
+phiLeroux = mvtnorm::rmvnorm(1,rep(0,n_shape),SigmaLeroux)
+
+
+# dados simulados
+N <- n_shape
+beta0 <- 2
+beta1 <- 3
+x <- rnorm(n=N)
+k <- 10
+eta1 <- beta0 + beta1*x
+eta1CARBYM2 <- beta0 + beta1*x+ phiBYM2
+eta1CARLeroux <- beta0 + beta1*x+ phiLeroux
+
+mu <- exp(eta1)
+muCARBYM2 <- exp(eta1CARBYM2) # parâmetro lambda BYM2
+muCARLeroux <- exp(eta1CARLeroux) # parâmetro lambda Leroux
+
+#sem dependencia
+y <- rnbinom(n=N,size = k ,mu=mu) 
+w <-  rpois(n=N,lambda = mu) 
+ 
+# BYM2
+yCARBYM2 <- rnbinom(n=N,size = k ,mu=muCARBYM2) # variavel binomial negativa
+wCARBYM2 <- rpois(n=N,lambda = muCARBYM2) # variavel poisson
+wCARBYM2 <-round(wCARBYM2,0)
+
+
+#Leroux
+yCARLeroux <- rnbinom(n=N,size = k ,mu=muCARLeroux) # variavel binomial negativa
+wCARLeroux <- rpois(n=N,lambda = muCARLeroux) # variavel poisson
+
+# Inflacionado de Zeros 
+############# poisson inflada a zeros
+psi0 <- 0.1
+psi1 <- -6# vetor de parâmetros das covariáveis do modelo logito 
+xE   <- runif(N,-5,5)# covariável do modelo logito
+eta2 <- psi0+psi1*xE #componente linear do logito
+pi      <- exp(eta2)/(1+exp(eta2)) # parâmetro pi
+
+h       = NULL
+winfl.ind       = NULL # vetor de valores inflados a zeros a ser preenchido pelo looping abaixo 
+for(i in 1:N){
+  h[i] = rbinom(n = 1,size = 1,prob = pi[i]) # variável auxiliar para determinar quais serão os zeros estruturais
+  
+  # obtendo variável inflada a zeros
+  if(h[i]==1){
+    winfl.ind[i] = 0  
+  }
+  else{
+    winfl.ind[i] = rpois(1,lambda = mu[i])}
+}
+
+############# binomial negativa inflada a zeros
+h       = NULL
+yinfl.ind       = NULL # vetor de valores inflados a zeros a ser preenchido pelo looping abaixo 
+for(i in 1:N){
+  h[i] = rbinom(n = 1,size = 1,prob = pi[i]) # variável auxiliar para determinar quais serão os zeros estruturais
+  
+  # obtendo variável inflada a zeros
+  if(h[i]==1){
+    yinfl.ind[i] = 0  
+  }
+  else{
+    yinfl.ind[i] = rnbinom(1,size = k,mu = mu[i])}
+}
+
+
+# Inflacionado de Zeros 
+############# poisson inflada a zeros
+psi0 <- 0.1
+psi1 <- -6# vetor de parâmetros das covariáveis do modelo logito 
+xE   <- runif(N,-5,5)# covariável do modelo logito
+eta2 <- psi0+psi1*xE #componente linear do logito
+pi      <- exp(eta2)/(1+exp(eta2)) # parâmetro pi
+
+h       = NULL
+winfl       = NULL # vetor de valores inflados a zeros a ser preenchido pelo looping abaixo 
+for(i in 1:N){
+  h[i] = rbinom(n = 1,size = 1,prob = pi[i]) # variável auxiliar para determinar quais serão os zeros estruturais
+  
+  # obtendo variável inflada a zeros
+  if(h[i]==1){
+    winfl[i] = 0  
+  }
+  else{
+    winfl[i] = rpois(1,lambda = muCARBYM2[i])}
+}
+
+############# binomial negativa inflada a zeros
+h       = NULL
+yinfl       = NULL # vetor de valores inflados a zeros a ser preenchido pelo looping abaixo 
+for(i in 1:N){
+  h[i] = rbinom(n = 1,size = 1,prob = pi[i]) # variável auxiliar para determinar quais serão os zeros estruturais
+  
+  # obtendo variável inflada a zeros
+  if(h[i]==1){
+    yinfl[i] = 0  
+  }
+  else{
+    yinfl[i] = rnbinom(1,size = k,mu = muCARBYM2[i])}
+}
+
+data = data.frame(wCARBYM2,yCARBYM2,x,yinfl,winfl,xE,y,w,winfl.ind,yinfl.ind)
+
+GlobalMoranY <- moran.test(yCARBYM2,nbw,alternative="two.sided")
+GlobalMoranW <- moran.test(wCARBYM2,nbw,alternative="two.sided")
+
+GlobalMoranY <- moran.test(yCARLeroux,nbw,alternative="two.sided")
+GlobalMoranW <- moran.test(wCARLeroux,nbw,alternative="two.sided")
+
+library(brms)
+library(coda)
+wCARBYM2.1 = as.integer(wCARBYM2)
